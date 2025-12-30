@@ -56,6 +56,21 @@ TRANS = {
         "tab_metabo": "⚗️ Metabo (代谢)",
         "tab_spatial": "🗺️ Spatial (空间)",
         "tab_imaging": "🖼️ Imaging (影像)",
+        "tab_user_mgmt": "👥 用户管理",
+        "tab_audit_logs": "📝 审计日志",
+        "tab_data_crud": "🧬 组学数据维护 (CRUD)",
+
+        # Admin CRUD
+        "crud_create_title": "➕ 新增专家注释 (Create)",
+        "crud_create_desc": "模拟专家审编流程：为特定基因添加生物学描述。",
+        "crud_update_title": "📝 修正注释 (Update)",
+        "crud_delete_title": "🗑️ 删除注释 (Delete)",
+        "btn_submit": "提交",
+        "btn_update": "更新",
+        "btn_delete": "删除",
+        "msg_success_create": "注释添加成功！",
+        "msg_success_update": "注释更新成功！",
+        "msg_success_delete": "注释删除成功！",
 
         # Headers & Captions
         "header_top_genes": "🔥 高表达基因排行",
@@ -109,6 +124,21 @@ TRANS = {
         "tab_metabo": "⚗️ Metabo",
         "tab_spatial": "🗺️ Spatial",
         "tab_imaging": "🖼️ Imaging",
+        "tab_user_mgmt": "👥 User Mgmt",
+        "tab_audit_logs": "📝 Audit Logs",
+        "tab_data_crud": "🧬 Data Maintenance (CRUD)",
+
+        # Admin CRUD
+        "crud_create_title": "➕ Add Expert Annotation (Create)",
+        "crud_create_desc": "Expert biocuration: Add biological descriptions for genes.",
+        "crud_update_title": "📝 Update Annotation",
+        "crud_delete_title": "🗑️ Delete Annotation",
+        "btn_submit": "Submit",
+        "btn_update": "Update",
+        "btn_delete": "Delete",
+        "msg_success_create": "Annotation added successfully!",
+        "msg_success_update": "Annotation updated successfully!",
+        "msg_success_delete": "Annotation deleted successfully!",
 
         # Headers & Captions
         "header_top_genes": "🔥 Top Expressed Genes",
@@ -133,7 +163,7 @@ st.set_page_config(page_title="BC-MOD Database", page_icon="🧬", layout="wide"
 
 # Database File Paths
 DB_PATHS = {
-    "scRNA": "./dbs/scrna.db",
+    "scRNA": "./dbs/scrna_3nf.db",
     "ATAC": "./dbs/atac.db",
     "Metabo": "./dbs/metabolomics.db",
     "Spatial": "./dbs/spatial.db",
@@ -196,6 +226,25 @@ def get_real_top_elements(mode):
     return []
 
 
+# --- MySQL Helper for Annotations ---
+def ensure_annotation_table():
+    """Create gene_annotations table in MySQL if not exists."""
+    conn = auth.get_connection()
+    if conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gene_annotations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                gene VARCHAR(50),
+                note TEXT,
+                author VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+
 # ==========================================
 # 3. UI Modules
 # ==========================================
@@ -230,6 +279,7 @@ def login_ui():
                 st.session_state['user_role'] = u['role']
                 st.session_state['username'] = u['username']
                 auth.log_action(user, "Login")
+                ensure_annotation_table()  # Initialize annotation table on login
                 st.success(t('success_login'))
                 st.rerun()
             else:
@@ -240,7 +290,8 @@ def admin_ui():
     st.header(t('nav_admin'))
     st.warning(f"Admin: {st.session_state['username']}")
 
-    tab1, tab2 = st.tabs(["User Management", "System Logs"])
+    tab1, tab2, tab3 = st.tabs([t('tab_user_mgmt'), t('tab_audit_logs'), t('tab_data_crud')])
+
     with tab1:
         st.subheader("Create New User")
         with st.form("new_u"):
@@ -254,14 +305,80 @@ def admin_ui():
                     auth.log_action(st.session_state['username'], f"Create user {nu}")
                 else:
                     st.error("Failed. Username exists?")
+
     with tab2:
         st.subheader("Audit Logs")
         if st.button("Refresh"): st.rerun()
         st.dataframe(auth.get_system_logs(20), use_container_width=True)
 
+    # --- [CRUD] Expert Annotation System ---
+    with tab3:
+        st.subheader(t('tab_data_crud'))
+
+        # 1. Create Annotation
+        with st.expander(t('crud_create_title'), expanded=True):
+            st.caption(t('crud_create_desc'))
+            c1, c2 = st.columns([1, 2])
+            target_gene = c1.text_input("Target Gene", "FOXA1").strip().upper()
+            note_content = c2.text_input("Annotation Content")
+
+            if st.button(t('btn_submit')):
+                if target_gene and note_content:
+                    conn = auth.get_connection()
+                    if conn:
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO gene_annotations (gene, note, author) VALUES (%s, %s, %s)",
+                                       (target_gene, note_content, st.session_state['username']))
+                        conn.commit()
+                        conn.close()
+                        st.success(t('msg_success_create'))
+                        auth.log_action(st.session_state['username'], f"Create Annotation: {target_gene}")
+                else:
+                    st.warning("Please fill all fields.")
+
+        st.divider()
+
+        # 2. Update & Delete (Manage Existing)
+        st.markdown("#### Manage Existing Annotations")
+        conn = auth.get_connection()
+        if conn:
+            # Load all annotations
+            df_notes = pd.read_sql("SELECT * FROM gene_annotations ORDER BY created_at DESC", conn)
+            conn.close()
+
+            if not df_notes.empty:
+                for index, row in df_notes.iterrows():
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([1, 3, 1])
+                        c1.markdown(f"**{row['gene']}**")
+
+                        # Update Logic
+                        new_note = c2.text_input("Edit Note", row['note'], key=f"edit_{row['id']}")
+                        if c2.button(t('btn_update'), key=f"btn_up_{row['id']}"):
+                            conn = auth.get_connection()
+                            cursor = conn.cursor()
+                            cursor.execute("UPDATE gene_annotations SET note=%s WHERE id=%s", (new_note, row['id']))
+                            conn.commit()
+                            conn.close()
+                            st.success(t('msg_success_update'))
+                            st.rerun()
+
+                        # Delete Logic
+                        if c3.button(t('btn_delete'), key=f"btn_del_{row['id']}"):
+                            conn = auth.get_connection()
+                            cursor = conn.cursor()
+                            cursor.execute("DELETE FROM gene_annotations WHERE id=%s", (row['id'],))
+                            conn.commit()
+                            conn.close()
+                            st.success(t('msg_success_delete'))
+                            auth.log_action(st.session_state['username'], f"Delete Annotation ID: {row['id']}")
+                            st.rerun()
+            else:
+                st.info("No annotations found.")
+
 
 # ------------------------------------------
-# Main Query Logic (Refactored)
+# Main Query Logic
 # ------------------------------------------
 def query_ui():
     # --- Sidebar Layout (Organized) ---
@@ -338,6 +455,19 @@ def query_ui():
 
         # Tab 1: scRNA
         with tabs[0]:
+            # [Display Expert Annotations]
+            conn_mysql = auth.get_connection()
+            if conn_mysql:
+                cursor = conn_mysql.cursor(dictionary=True)
+                cursor.execute("SELECT * FROM gene_annotations WHERE gene = %s", (gene_input,))
+                notes = cursor.fetchall()
+                conn_mysql.close()
+                if notes:
+                    st.info(f"📋 **Expert Annotation / 专家注释 ({len(notes)})**")
+                    for n in notes:
+                        st.markdown(f"- {n['note']} *(By: {n['author']} @ {n['created_at']})*")
+
+            # Main Chart
             sql = f"SELECT Subtype, CellType, Avg_Expression FROM Table_Expression WHERE Gene = '{gene_input}'"
             if subtype != "All": sql += f" AND Subtype = '{subtype}'"
             df = run_sqlite_query("scRNA", sql)

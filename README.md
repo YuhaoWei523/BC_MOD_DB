@@ -1,7 +1,7 @@
 # 🧬 BC-MOD: Breast Cancer Multi-Omics Database Platform
 # 乳腺癌多组学联邦数据库平台
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
+[![Python[dbs](dbs)](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-red)](https://streamlit.io/)
 [![MySQL](https://img.shields.io/badge/Database-MySQL%20%26%20SQLite-orange)](https://www.mysql.com/)
 
